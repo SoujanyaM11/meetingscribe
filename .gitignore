@@ -1,0 +1,31 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# data / models (kept out of git; configure MEETINGSCRIBE_DATA_DIR for deployment)
+data/
+models/
+*.wav
+*.db
+*.sqlite3
+
+# bot build artifacts + the Zoom SDK (do NOT redistribute the SDK)
+bot/build/
+bot/sdk/
+
+# os
+.DS_Store
+Thumbs.db
+
+# coverage
+.coverage
+.coverage.*
+htmlcov/

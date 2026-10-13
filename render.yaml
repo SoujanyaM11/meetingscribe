@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: meetingscribe
+    runtime: python
+    plan: starter
+    region: singapore
+    branch: main
+    buildCommand: pip install .
+    startCommand: uvicorn app.server.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: MEETINGSCRIBE_DATA_DIR
+        value: /var/data/meetingnotes
+      - key: MEETINGSCRIBE_AUTOSTART
+        value: "false"
+      - key: MEETINGSCRIBE_LLM_BACKEND
+        value: none
+    disk:
+      name: meetingscribe-data
+      mountPath: /var/data
+      sizeGB: 1

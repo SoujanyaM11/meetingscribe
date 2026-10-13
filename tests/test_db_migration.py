@@ -1,0 +1,124 @@
+"""Schema migration + idempotency.
+
+Opening a DB created by an OLDER MeetingScribe (before the `confidence` /
+`template` columns and some tables existed) must migrate it in place without
+losing data, and re-opening an already-current DB must be a no-op. _connect()
+re-runs _SCHEMA on every fresh connection (i.e. every app start), so any
+non-`IF NOT EXISTS` statement would crash on the second run — this pins that.
+"""
+import sqlite3
+
+from app import db
+
+# Pre-migration schema: meetings WITHOUT `template`, segments WITHOUT
+# `confidence`, and none of the later tables (summaries, action_items, ...).
+_OLD_SCHEMA = """
+CREATE TABLE meetings (
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, platform TEXT NOT NULL DEFAULT 'other',
+    started_at REAL NOT NULL, ended_at REAL, status TEXT NOT NULL DEFAULT 'recording',
+    language TEXT, duration_sec REAL
+);
+CREATE TABLE segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    start REAL NOT NULL, end REAL NOT NULL, speaker TEXT NOT NULL DEFAULT 'Unknown',
+    text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'live'
+);
+CREATE TABLE action_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    text TEXT NOT NULL, owner TEXT, due TEXT, done INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+def _seed_old_db(path):
+    con = sqlite3.connect(str(path))
+    con.executescript(_OLD_SCHEMA)
+    con.execute("INSERT INTO meetings (id, title, platform, started_at) "
+                "VALUES ('m1', 'Old Meeting', 'meet', 1.0)")
+    con.execute("INSERT INTO segments (meeting_id, start, end, speaker, text, source) "
+                "VALUES ('m1', 0, 1, 'Me', 'hello world', 'batch')")
+    con.execute("INSERT INTO action_items (meeting_id, text, done) "
+                "VALUES ('m1', 'pre-existing task', 0)")
+    con.commit()
+    con.close()
+
+
+def test_fts_tokenizer_migrates_to_stemming(tmp_path, monkeypatch):
+    # Seed a DB whose FTS uses the OLD (non-stemming) tokenizer, then verify
+    # _connect() upgrades it to 'porter' in place, keeps the data, and enables
+    # stemmed search ("hire" finds "hires").
+    p = tmp_path / "meetingscribe.db"
+    con = sqlite3.connect(str(p))
+    con.executescript(_OLD_SCHEMA)
+    con.executescript(
+        "CREATE VIRTUAL TABLE segments_fts USING fts5("
+        "text, speaker UNINDEXED, meeting_id UNINDEXED, "
+        "content='segments', content_rowid='id');")        # no tokenize -> unicode61
+    con.execute("INSERT INTO meetings (id,title,platform,started_at) "
+                "VALUES ('m1','M','meet',1.0)")
+    con.execute("INSERT INTO segments (meeting_id,start,end,speaker,text,source) "
+                "VALUES ('m1',0,1,'A','We approved new engineering hires.','batch')")
+    con.execute("INSERT INTO segments_fts(rowid,text,speaker,meeting_id) "
+                "SELECT id,text,speaker,meeting_id FROM segments")
+    con.commit()
+    con.close()
+
+    s = db.get_settings()
+    monkeypatch.setattr(s, "data_dir", tmp_path)
+    db.reset_connection()
+    try:
+        conn = db._connect()                               # runs the FTS migration
+        fts_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name='segments_fts'").fetchone()[0]
+        assert "porter" in fts_sql                         # tokenizer upgraded
+        assert db.get_segments("m1")[0].text.endswith("hires.")   # data survived
+        hits = db.search("hire")                           # stem 'hire' matches 'hires'
+        assert any(h["meeting_id"] == "m1" for h in hits)
+        # idempotent: a second connect doesn't re-migrate or error
+        db.reset_connection()
+        db._connect()
+        assert "porter" in db._connect().execute(
+            "SELECT sql FROM sqlite_master WHERE name='segments_fts'").fetchone()[0]
+    finally:
+        db.reset_connection()
+
+
+def test_old_db_migrates_in_place_and_keeps_data(tmp_path, monkeypatch):
+    _seed_old_db(tmp_path / "meetingscribe.db")
+    s = db.get_settings()
+    monkeypatch.setattr(s, "data_dir", tmp_path)   # db_path = tmp_path/meetingscribe.db
+    db.reset_connection()
+    try:
+        conn = db._connect()                        # runs _SCHEMA + idempotent migrations
+
+        seg_cols = {r[1] for r in conn.execute("PRAGMA table_info(segments)")}
+        mtg_cols = {r[1] for r in conn.execute("PRAGMA table_info(meetings)")}
+        act_cols = {r[1] for r in conn.execute("PRAGMA table_info(action_items)")}
+        assert "confidence" in seg_cols             # added by migration
+        assert "template" in mtg_cols               # added by migration
+        assert "source" in act_cols                 # added by migration
+
+        # pre-existing data survived
+        m = db.get_meeting("m1")
+        assert m and m.title == "Old Meeting"
+        segs = db.get_segments("m1")
+        assert len(segs) == 1 and segs[0].text == "hello world"
+        # a pre-existing action item is migrated to source='auto' (so a future
+        # save_action_items can replace it; new manual ones won't be wiped)
+        src = conn.execute("SELECT source FROM action_items WHERE meeting_id='m1'").fetchone()
+        assert src[0] == "auto"
+
+        # tables the old DB lacked were created
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"summaries", "action_items", "annotations", "segments_fts"} <= names
+
+        # idempotent: a SECOND fresh connection re-runs _SCHEMA over the migrated
+        # DB without error (every app restart does this) and data is intact
+        db.reset_connection()
+        db._connect()
+        assert db.get_meeting("m1").title == "Old Meeting"
+    finally:
+        db.reset_connection()                       # don't leak the temp conn to other tests

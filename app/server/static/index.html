@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MeetingScribe</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🎙️ MeetingScribe</h1>
+    <span class="tag">local · key-free · MIT</span>
+    <button id="theme-btn" class="theme-btn" title="Toggle light/dark" aria-label="Toggle light or dark theme">🌓</button>
+    <button id="help-btn" class="theme-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">⌨</button>
+    <span id="conn" class="dot" title="live connection"></span>
+  </header>
+
+  <main>
+    <section id="left">
+      <div class="card" id="record-card">
+        <h2>New recording</h2>
+        <input id="title" placeholder="Meeting title" />
+        <div class="row">
+          <select id="platform">
+            <option value="meet">Google Meet</option>
+            <option value="zoom">Zoom</option>
+            <option value="other">Other</option>
+          </select>
+          <label><input type="checkbox" id="cap-mic" checked /> Mic (Me)</label>
+          <label><input type="checkbox" id="cap-sys" checked /> System (Others)</label>
+        </div>
+        <div class="row">
+          <select id="language" title="Transcription language">
+            <option value="">Auto-detect language</option>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="pt">Portuguese</option>
+            <option value="ar">Arabic</option>
+            <option value="zh">Chinese</option>
+            <option value="hi">Hindi</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="btn-start" class="primary">● Start</button>
+          <button id="btn-stop" class="danger" disabled>■ Stop</button>
+        </div>
+        <p id="rec-status" class="muted">Idle.</p>
+      </div>
+
+      <div class="card">
+        <h2>Ask all meetings</h2>
+        <div class="row">
+          <input id="ask-q" placeholder="e.g. What did we decide about OAuth?" />
+          <button id="btn-ask-all" class="primary">Ask</button>
+        </div>
+        <div id="ask-answer"></div>
+        <h2 style="margin-top:14px">Search all meetings</h2>
+        <input id="search" placeholder="Search transcripts…" />
+        <div id="search-results"></div>
+      </div>
+
+      <div class="card">
+        <h2>Voice profiles</h2>
+        <div id="profiles"></div>
+      </div>
+
+      <div class="card">
+        <h2>Custom vocabulary <span id="vocab-save" class="ai-toggle">· save</span></h2>
+        <textarea id="vocab" rows="3" placeholder="Names & jargon, one per line (e.g. Andrej Karpathy, OAuth, WASAPI) — biases transcription"></textarea>
+      </div>
+
+      <div class="card">
+        <h2>Action items <span id="ai-toggle" class="ai-toggle">(open only)</span> <span id="ai-csv" class="ai-toggle">· CSV</span></h2>
+        <div id="all-actions"></div>
+      </div>
+
+      <div class="card">
+        <h2>Meetings <span id="ml-select" class="ai-toggle">select</span> <span id="ml-del" class="ai-toggle danger-text hidden">delete</span></h2>
+        <input id="ml-filter" class="ml-filter" type="search" placeholder="Filter meetings… (title)" autocomplete="off">
+        <label class="ml-followup"><input type="checkbox" id="ml-followup"> needs follow-up (open action items)</label>
+        <div id="tag-filter" class="tagbar"></div>
+        <ul id="meeting-list"></ul>
+        <div id="ml-empty" class="muted hidden">No meetings match.</div>
+      </div>
+    </section>
+
+    <section id="right">
+      <div class="card" id="live-card">
+        <h2>Live transcript <span id="live-flag" class="muted"></span></h2>
+        <div id="live-notes" class="hidden"></div>
+        <div id="live"></div>
+      </div>
+
+      <div class="card hidden" id="detail-card">
+        <div class="row between">
+          <h2 id="detail-title">Meeting</h2>
+          <div>
+            <button id="btn-copy" class="ghost" title="Copy notes to clipboard">Copy</button>
+            <button id="btn-reel" class="ghost" title="Download starred lines as one audio clip">Reel</button>
+            <select id="export-fmt" class="ghost" title="Export / download">
+              <option value="">Export…</option>
+              <option value="md">Markdown (.md)</option>
+              <option value="txt">Plain text (.txt)</option>
+              <option value="srt">Subtitles (.srt)</option>
+              <option value="vtt">WebVTT (.vtt)</option>
+              <option value="html">Web page (.html)</option>
+              <option value="json">JSON (.json)</option>
+            </select>
+            <select id="tmpl-sel" class="ghost" title="Summary template (meeting type)"></select>
+            <button id="btn-regen" class="ghost" title="Re-summarize with the selected template">Regen notes</button>
+            <button id="btn-reprocess" class="ghost" title="Re-run full transcription + notes">Reprocess</button>
+            <button id="btn-free-audio" class="ghost" title="Delete WAVs, keep notes">Free audio</button>
+            <button id="btn-delete" class="ghost danger-text">Delete</button>
+          </div>
+        </div>
+        <p id="detail-meta" class="muted"></p>
+        <p id="detail-domspk" class="domspk hidden"></p>
+        <div id="tags" class="tagbar"></div>
+        <audio id="player" controls preload="none"></audio>
+        <p id="audio-missing" class="muted hidden">Audio was removed for this meeting (notes kept).</p>
+
+        <div id="summary"></div>
+        <div id="topics" class="tagbar"></div>
+
+        <h3>Speakers</h3>
+        <div id="speakers"></div>
+
+        <h3>Action items</h3>
+        <ul id="actions"></ul>
+
+        <h3>Talk time</h3>
+        <div id="analytics"></div>
+
+        <h3 id="chapters-h" class="hidden">Chapters</h3>
+        <div id="chapters"></div>
+
+        <h3>Notes &amp; highlights</h3>
+        <div class="row">
+          <input id="comment-input" placeholder="Add a note or comment…" />
+          <button id="btn-comment" class="primary">Add</button>
+        </div>
+        <div id="annotations"></div>
+
+        <h3>Ask this meeting</h3>
+        <div class="row">
+          <input id="chat-q" placeholder="e.g. What did we decide about the budget?" />
+          <button id="btn-ask" class="primary">Ask</button>
+        </div>
+        <div id="chat-answer"></div>
+
+        <h3>Transcript <input id="t-search" class="t-search" placeholder="find in transcript…" /><span id="t-search-n" class="muted"></span></h3>
+        <div id="transcript"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="help-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div class="help-box">
+      <h2>Keyboard shortcuts</h2>
+      <table>
+        <tr><td><kbd>?</kbd></td><td>Show / hide this help</td></tr>
+        <tr><td><kbd>/</kbd></td><td>Focus search</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Play / pause audio (when a meeting is open)</td></tr>
+        <tr><td><kbd>r</kbd></td><td>Start / stop recording</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close this help / cancel an edit</td></tr>
+      </table>
+      <p class="muted">Double-click a transcript line to edit it; ✎ on the summary to edit notes.</p>
+      <button id="help-close" class="ghost">Close</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
